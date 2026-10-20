@@ -90,13 +90,63 @@ catalog@http://localhost:3001/remoteEntry.js
 cart@http://localhost:3002/remoteEntry.js
 ```
 
+## How the shell finds a chunk
+
+Same steps in dev and production. The shell knows the remote URL and the expose name. It does not know chunk filenames. Catalog's compile writes those names into `remoteEntry.js`.
+
+Shell source:
+
+```ts
+const CatalogApp = lazy(() => import("catalog/CatalogApp"));
+```
+
+Shell webpack rewrites that import into: load the catalog `remoteEntry.js` URL from the shell config, then call `catalog.get("./CatalogApp")`.
+
+| | Dev, this repo | Production, after the remote URL is set |
+| --- | --- | --- |
+| Shell config | `catalog@http://localhost:3001/remoteEntry.js` | `catalog@https://catalog.example.com/remoteEntry.js` |
+| Manifest request | `http://localhost:3001/remoteEntry.js` | `https://catalog.example.com/remoteEntry.js` |
+| Where the file lives | webpack-dev-server memory | catalog's deployed output |
+
+The manifest contains a map like this. The chunk id string differs between a dev build and a production build. The shape is the same:
+
+```js
+"./CatalogApp": () =>
+  Promise.all([
+    __webpack_require__.e("src_CatalogApp_tsx"),
+    // plus the shared React and CSS chunks
+  ]).then(() => __webpack_require__("./src/CatalogApp.tsx"))
+```
+
+`__webpack_require__.e` loads a script. The filename function in dev is `chunkId + ".js"`, so `src_CatalogApp_tsx` becomes `src_CatalogApp_tsx.js`. A production build usually hashes that filename. The new hash is inside the new `remoteEntry.js`, which is why the shell does not need the chunk name at compile time.
+
+`publicPath: "auto"` takes the directory of the script that just ran and uses it for every following chunk. Dev and production use that same rule:
+
+| Script that just ran | Chunk request |
+| --- | --- |
+| `http://localhost:3001/remoteEntry.js` | `http://localhost:3001/src_CatalogApp_tsx.js` |
+| `https://catalog.example.com/remoteEntry.js` | `https://catalog.example.com/<hashed-chunk>.js` |
+
+That second file is the compiled component. `get("./CatalogApp")` resolves, and `React.lazy` renders it. Cart works the same way through `cart.get("./CartApp")`.
+
+```mermaid
+sequenceDiagram
+  participant Shell as shell bundle
+  participant Entry as remoteEntry.js
+  participant Chunk as component chunk
+
+  Shell->>Entry: load the configured remoteEntry.js URL
+  Shell->>Entry: catalog.get("./CatalogApp")
+  Note over Entry: module map lists the chunk id
+  Entry->>Chunk: GET that id from the remoteEntry.js directory
+  Chunk-->>Shell: CatalogApp module
+```
+
 ## Production
 
 This repo has no production script. Every app script is `webpack serve --mode development`.
 
 A production build is `webpack --mode production` once per app. That writes files to disk: `remoteEntry.js` plus hashed chunks. Deploy the three output folders separately. The user still opens only the shell. Catalog and cart are other hosts, for example `https://catalog.example.com/remoteEntry.js`.
-
-`publicPath: "auto"` still applies. Chunks load from whichever host served `remoteEntry.js`, not from the shell's domain.
 
 The shell remotes in this repo are localhost. A production shell build would keep requesting `localhost:3001` and `localhost:3002` until those URLs are changed to the deployed hosts. After that, a catalog change is: rebuild catalog, upload its output, leave the shell deployed as it is. The next page load fetches the same `remoteEntry.js` URL and gets the new chunks. Rebuild the shell only when a remote URL or the exposed module name changes.
 
@@ -104,7 +154,41 @@ Dev-server CORS headers are not part of the static files. The host that serves c
 
 ## Routes
 
-`BrowserRouter` lives in the shell. Catalog and cart do not bring their own history when they are remotes. Catalog's standalone bootstrap wraps `CatalogApp` in a router so http://localhost:3001 works alone.
+The shell owns the site URLs. Catalog owns only the remainder under `/catalog`. One `BrowserRouter` in the shell is the history for the whole page. React Router is a shared singleton, so catalog's `<Routes>` and `<Link>` use that same history.
+
+```tsx
+<Route path="/" element={<Navigate to="/catalog" replace />} />
+<Route path="/catalog/*" element={<CatalogApp />} />
+<Route path="/cart/*" element={<CartApp />} />
+<Route path="*" element={<p>No route for this path.</p>} />
+```
+
+The `/*` keeps the shell route matched when the URL goes deeper, and it leaves the remainder for the remote. Catalog matches that remainder:
+
+```tsx
+<Route index element={<ProductList />} />
+<Route path=":productId" element={<ProductDetail />} />
+```
+
+| URL on the shell | Who matches it | What renders |
+| --- | --- | --- |
+| `/` | shell | redirect to `/catalog` |
+| `/catalog` | shell, then catalog index | product list |
+| `/catalog/kb-01` | shell, then catalog `:productId` | that product |
+| `/cart` | shell | `CartApp` |
+| anything else | shell `*` | "No route for this path." |
+
+Cart has no inner routes. `/cart` and `/cart/anything` both render the same panel.
+
+A product link is `to={product.id}`, relative to the current route. On the shell, `/catalog` plus `kb-01` becomes `/catalog/kb-01`. "Back to catalog" is `to=".."`, which returns to `/catalog`. Header links are absolute: `/catalog` and `/cart`.
+
+### `bootstrap.tsx`
+
+Each app's `src/index.ts` is only `import("./bootstrap")`. That file is the dev-server entry. The shell does not load a remote's `bootstrap.tsx`. It loads the exposed component: `CatalogApp` or `CartApp`.
+
+When you open the shell, the only `BrowserRouter` is in `apps/shell/src/App.tsx`. `apps/shell/src/bootstrap.tsx` mounts that `App`. Catalog and cart render inside it, and their `<Routes>` and `<Link>` use that history because React Router is one shared singleton.
+
+The other `BrowserRouter` is in `apps/catalog/src/bootstrap.tsx`. That file runs only when you open http://localhost:3001 by itself. With no `/catalog` parent, the index route is `/` and the detail route is `/kb-01`. Cart's `bootstrap.tsx` renders `CartApp` with no router, because the cart UI does not read the path.
 
 ```mermaid
 flowchart TD
@@ -114,6 +198,8 @@ flowchart TD
   cartPath["/cart/*"] --> cartView["CartApp\nlines + Remove"]
   missing["anything else"] --> note["No route for this path"]
 ```
+
+A refresh of `/catalog/kb-01` still works. The dev server falls back to `index.html`, and `<base href="/">` loads `/main.js` instead of `/catalog/main.js`. The router then reads the real URL. Production uses these same paths on the shell host. The remote hosts serve scripts, not these URLs.
 
 If a remote fails to load, that slot shows "Catalog is unavailable" or "Cart is unavailable". The other route still renders.
 
