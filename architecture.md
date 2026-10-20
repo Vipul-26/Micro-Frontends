@@ -68,6 +68,26 @@ sequenceDiagram
 
 `output.publicPath` is `"auto"`, so catalog's extra chunks stay on port 3001 even though the document is on port 3000. Each app's `src/index.ts` is only `import("./bootstrap")`, so shared React is installed before app code imports it.
 
+## Where `remoteEntry.js` is
+
+It is not a file in the repo. `ModuleFederationPlugin` emits it when catalog and cart run.
+
+| App | Config | Served at |
+| --- | --- | --- |
+| catalog | `filename: "remoteEntry.js"`, exposes `./CatalogApp` | http://localhost:3001/remoteEntry.js |
+| cart | `filename: "remoteEntry.js"`, exposes `./CartApp` | http://localhost:3002/remoteEntry.js |
+
+`npm run dev` keeps those files in memory. Webpack-dev-server serves them. A production build would write each one into that app's output folder.
+
+The shell does not contain `remoteEntry.js`. `apps/shell/webpack.config.js` only lists the two URLs:
+
+```text
+catalog@http://localhost:3001/remoteEntry.js
+cart@http://localhost:3002/remoteEntry.js
+```
+
+The downloaded file is the manifest. It tells the shell how to load `CatalogApp` and `CartApp`.
+
 ## Routes
 
 `BrowserRouter` lives in the shell. Catalog and cart do not bring their own history when they are remotes. Catalog's standalone bootstrap wraps `CatalogApp` in a router so http://localhost:3001 works alone.
