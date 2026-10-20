@@ -45,7 +45,33 @@ flowchart TB
 | `cart` | http://localhost:3002 | `cart/CartApp` |
 | `@mfe/cart-client` | none | bundled into each app |
 
-React `18.3.1`, ReactDOM `18.3.1`, and React Router `6.28.1` are singletons. One copy of each is on the page.
+## Shared dependencies
+
+Do not ship React three times. Hooks and context belong to the React copy that created them. Two copies on one page is an `Invalid hook call`, or a router context the remote cannot see. The shell's `BrowserRouter` is created by the shell's React. Catalog's `<Routes>` must render with that same React.
+
+The decision is the `shared` object in each webpack config. `singleton: true` is set there, not in `package.json`. The same block is in `apps/shell/webpack.config.js`, `apps/catalog/webpack.config.js`, and `apps/cart/webpack.config.js`. The host and the remote both list a library, or the remote will not look for the host's copy.
+
+```js
+shared: {
+  react: { singleton: true, requiredVersion: "18.3.1" },
+  "react-dom": { singleton: true, requiredVersion: "18.3.1" },
+  "react-router-dom": { singleton: true, requiredVersion: "6.28.1" },
+}
+```
+
+`requiredVersion` is the compatibility check. These are exact versions. A remote built with another React does not attach to the host's copy. A range such as `^18.3.1` would allow small patch differences to share. This repo does not do that.
+
+`package.json` still depends on `react`, `react-dom`, and `react-router-dom` in all three apps. `shared` does not remove that. Each app is its own build and must run alone: open http://localhost:3001 and there is no shell, so catalog's webpack must resolve React itself. `npm install` hoists one `react@18.3.1` in this workspace, so disk does not hold three versions.
+
+At runtime inside the shell:
+
+1. The shell puts its React `18.3.1` into the shared scope.
+2. Catalog's build still contains a fallback copy from catalog's compile.
+3. Catalog asks for `react` as a singleton. The version matches, so it uses the shell's React and does not run its fallback.
+
+Anything not named in `shared` is local to that build. `@mfe/cart-client`, the product list, and the cart UI are local. Each app bundles its own copy. The cart is still one store because the first bundle puts it on `window.__MFE_CART__`, not because Module Federation deduped that package.
+
+Sharing more than the framework means every app upgrades together. Sharing less means three Reacts on one page. This repo shares the framework and the router, and leaves feature code local.
 
 ## What loads when
 
