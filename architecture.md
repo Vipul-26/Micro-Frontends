@@ -67,7 +67,9 @@ At runtime inside the shell:
 
 1. The shell puts its React `18.3.1` into the shared scope.
 2. Catalog's build still contains a fallback copy from catalog's compile.
-3. Catalog asks for `react` as a singleton. The version matches, so it uses the shell's React and does not run its fallback.
+3. Catalog asks for `react` as a singleton. That request does not read `node_modules`. The browser has no `node_modules`. It goes to Module Federation's share scope, a registry in the page's memory. The shell already registered its React there, so catalog uses that object and does not run its fallback.
+
+`node_modules` is only used when webpack compiles. Catalog's compile records a fallback copy of React from `node_modules`, plus the runtime request for the singleton. Open http://localhost:3001 alone and the share scope is empty, so catalog runs that fallback. Catalog is the only app on that page, so there is still one React.
 
 Anything not named in `shared` is local to that build. `@mfe/cart-client`, the product list, and the cart UI are local. Each app bundles its own copy. The cart is still one store because the first bundle puts it on `window.__MFE_CART__`, not because Module Federation deduped that package.
 
@@ -229,9 +231,37 @@ A refresh of `/catalog/kb-01` still works. The dev server falls back to `index.h
 
 If a remote fails to load, that slot shows "Catalog is unavailable" or "Cart is unavailable". The other route still renders.
 
-## Cart
+## Run one app
 
-Each app bundles `@mfe/cart-client`. A module-level variable would be three stores. The first bundle creates the store and hangs it on `window.__MFE_CART__`. The others find that object.
+One `npm install`, run at the repo root, installs every app. It is not run inside `apps/shell`, `apps/catalog`, or `apps/cart`. The root `package.json` lists `"workspaces": ["apps/*", "packages/*"]`. npm reads each workspace `package.json`, installs the dependencies those files name, and puts the result in the root `node_modules`. That single install covers the shell, catalog, cart, and `@mfe/cart-client`.
+
+There is one `node_modules`, at the repo root. The three apps do not have their own. `node_modules/catalog` points at `apps/catalog`. `node_modules/@mfe/cart-client` points at `packages/cart-client`.
+
+Node resolves a package by walking up parent folders. Catalog imports `react`. There is no `apps/catalog/node_modules/react`, so Node checks `apps/node_modules`, then the root `node_modules/react`. `npm run dev` inside an app finds `webpack` the same way: npm puts the root `node_modules/.bin` on the path.
+
+There is no production build script. Each app's only script is `dev`: `webpack serve --mode development`. That compiles in memory and serves the app. It does not write a `dist` folder.
+
+A package used only by cart is declared only in `apps/cart/package.json`. Leave it out of the shell and catalog `package.json` files, and leave it out of every `shared` block. Then run `npm install` from the repo root. Cart's build bundles it. The shell and catalog do not import it. If no other workspace needs a different version, npm still hoists it to the root `node_modules`. An incompatible second version is placed in `apps/cart/node_modules` instead.
+
+```bash
+npm run dev -w catalog
+npm run dev -w cart
+npm run dev -w shell
+```
+
+| Command | What you get |
+| --- | --- |
+| `npm run dev -w catalog` | http://localhost:3001, its own `BrowserRouter`, list at `/`, detail at `/kb-01` |
+| `npm run dev -w cart` | http://localhost:3002, the cart panel only. It has no router |
+| `npm run dev -w shell` | http://localhost:3000. Catalog and cart must already be serving, or those slots show unavailable |
+
+`npm run dev` with no workspace flag starts catalog and cart, waits until both `remoteEntry.js` URLs answer, then starts the shell. An app running alone uses its own `bootstrap.tsx`. Inside the shell, only the exposed `CatalogApp` or `CartApp` loads.
+
+## Data sharing
+
+This repo does not use Redux. `@mfe/cart-client` is a plain store: `addToCart`, `removeFromCart`, and `useCartLines`. Each app bundles that package. A module-level variable would be three stores. The first bundle creates the store and hangs it on `window.__MFE_CART__`. The others find that object.
+
+`useCartLines` is `useSyncExternalStore` around that store, so the shell badge, the catalog quantity, and the cart lines re-render from one array. A React context inside `CartApp` cannot do this. Catalog must update the cart while `CartApp` is not mounted.
 
 ```mermaid
 flowchart LR
@@ -245,6 +275,9 @@ flowchart LR
 
 A full reload clears the cart. The store belongs to that document, so http://localhost:3001 does not share a cart with http://localhost:3000.
 
-## Start
+Redux would need the same shape: one store object, found by every build. Two ways to get that:
 
-`npm run dev` starts catalog and cart, waits until both `remoteEntry.js` URLs answer, then starts the shell. Catalog and cart must be compiled and serving before the shell asks for them.
+- Hang the Redux store on `window`, the way this cart store is. Each app still bundles the store module. They all read `window` instead of calling `createStore()` again.
+- Put that store module in `shared` with `singleton: true`, the way React is shared. Module Federation then runs one copy of the module, and a module-level `createStore()` really is one store.
+
+A provider that lives only inside `CartApp` still fails. It is not mounted on `/catalog`, so catalog cannot dispatch. The provider has to sit in the shell, above both remotes, or the store has to live outside React. This repo uses `window`.
