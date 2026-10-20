@@ -1,0 +1,111 @@
+.panel h1,
+.panel h2,
+.panel p {
+  margin: 0;
+}
+
+.heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.title {
+  font-size: 28px;
+  letter-spacing: -0.03em;
+}
+
+.origin {
+  color: #78716c;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #e7e5e4;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.product {
+  color: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.product:hover {
+  text-decoration: underline;
+}
+
+.price {
+  color: #44403c;
+}
+
+.summary {
+  color: #57534e;
+  line-height: 1.45;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.actions span,
+.missing {
+  color: #78716c;
+  font-size: 13px;
+}
+
+.actions button,
+.back {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #0f766e;
+  color: #f0fdfa;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: 16px;
+}
+
+.actions button:focus-visible,
+.back:focus-visible,
+.product:focus-visible {
+  outline: 2px solid #115e59;
+  outline-offset: 2px;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 36rem;
+}

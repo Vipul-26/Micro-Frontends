@@ -1,0 +1,115 @@
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background: #f4f5f7;
+  color: #1c1917;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+.shell {
+  min-height: 100vh;
+}
+
+.shell-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px;
+  background: #1c1917;
+  color: #fafaf9;
+}
+
+.shell-mark {
+  color: inherit;
+  font-weight: 650;
+  text-decoration: none;
+  letter-spacing: -0.02em;
+}
+
+.shell-origin {
+  color: #a8a29e;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.shell-nav {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.shell-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  color: #fafaf9;
+  text-decoration: none;
+}
+
+.shell-nav a[aria-current="page"] {
+  background: #0f766e;
+}
+
+.shell-count {
+  min-width: 1.25rem;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fafaf9;
+  color: #1c1917;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.shell-main {
+  padding: 28px 24px 48px;
+}
+
+.remote-status,
+.remote-error {
+  margin: 0;
+  color: #57534e;
+}
+
+.remote-error {
+  max-width: 36rem;
+  padding: 16px;
+  border: 1px solid #fecdd3;
+  border-radius: 12px;
+  background: #fff1f2;
+  color: #881337;
+}
+
+.remote-error-detail {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 13px;
+}
+
+.remote-error button {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #9f1239;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .shell-header {
+    flex-wrap: wrap;
+  }
+
+  .shell-nav {
+    width: 100%;
+    margin-left: 0;
+  }
+}
