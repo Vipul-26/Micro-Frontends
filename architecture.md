@@ -70,14 +70,18 @@ sequenceDiagram
 
 ## Where `remoteEntry.js` is
 
-It is not a file in the repo. `ModuleFederationPlugin` emits it when catalog and cart run.
+It is not a file in the repo. You do not write it. `ModuleFederationPlugin` adds it to the catalog and cart compilations.
 
 | App | Config | Served at |
 | --- | --- | --- |
 | catalog | `filename: "remoteEntry.js"`, exposes `./CatalogApp` | http://localhost:3001/remoteEntry.js |
 | cart | `filename: "remoteEntry.js"`, exposes `./CartApp` | http://localhost:3002/remoteEntry.js |
 
-`npm run dev` keeps those files in memory. Webpack-dev-server serves them. A production build would write each one into that app's output folder.
+`npm run dev` runs three compilers. Catalog webpack compiles `apps/catalog`. Cart webpack compiles `apps/cart`. Shell webpack compiles only `apps/shell`. The shell config lists remote URLs. It does not compile catalog or cart source.
+
+Dev has no `dist` folder. Webpack-dev-server keeps each compilation in memory. Stop the servers and `remoteEntry.js` is gone.
+
+`remoteEntry.js` is a manifest, not the whole app. The browser downloads it, reads which chunks `CatalogApp` or `CartApp` need, then downloads those chunks from the same host, for example `http://localhost:3001/src_CatalogApp_tsx.js`. Those chunks are the compiled catalog code. The shell bundle is not rebuilt when catalog changes. Saving a catalog file recompiles catalog in memory, and the next page load fetches the new manifest and chunks.
 
 The shell does not contain `remoteEntry.js`. `apps/shell/webpack.config.js` only lists the two URLs:
 
@@ -86,7 +90,17 @@ catalog@http://localhost:3001/remoteEntry.js
 cart@http://localhost:3002/remoteEntry.js
 ```
 
-The downloaded file is the manifest. It tells the shell how to load `CatalogApp` and `CartApp`.
+## Production
+
+This repo has no production script. Every app script is `webpack serve --mode development`.
+
+A production build is `webpack --mode production` once per app. That writes files to disk: `remoteEntry.js` plus hashed chunks. Deploy the three output folders separately. The user still opens only the shell. Catalog and cart are other hosts, for example `https://catalog.example.com/remoteEntry.js`.
+
+`publicPath: "auto"` still applies. Chunks load from whichever host served `remoteEntry.js`, not from the shell's domain.
+
+The shell remotes in this repo are localhost. A production shell build would keep requesting `localhost:3001` and `localhost:3002` until those URLs are changed to the deployed hosts. After that, a catalog change is: rebuild catalog, upload its output, leave the shell deployed as it is. The next page load fetches the same `remoteEntry.js` URL and gets the new chunks. Rebuild the shell only when a remote URL or the exposed module name changes.
+
+Dev-server CORS headers are not part of the static files. The host that serves catalog and cart must allow the shell origin to load those scripts. The deployed builds must stay on the same React, ReactDOM, and React Router versions, because they are singletons. The cart store is the same in production: `window.__MFE_CART__` for that page load, cleared on a full reload.
 
 ## Routes
 
@@ -121,4 +135,4 @@ A full reload clears the cart. The store belongs to that document, so http://loc
 
 ## Start
 
-`npm run dev` starts catalog and cart, waits until both `remoteEntry.js` URLs answer, then starts the shell.
+`npm run dev` starts catalog and cart, waits until both `remoteEntry.js` URLs answer, then starts the shell. Catalog and cart must be compiled and serving before the shell asks for them.
