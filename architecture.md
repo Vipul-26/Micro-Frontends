@@ -281,3 +281,27 @@ Redux would need the same shape: one store object, found by every build. Two way
 - Put that store module in `shared` with `singleton: true`, the way React is shared. Module Federation then runs one copy of the module, and a module-level `createStore()` really is one store.
 
 A provider that lives only inside `CartApp` still fails. It is not mounted on `/catalog`, so catalog cannot dispatch. The provider has to sit in the shell, above both remotes, or the store has to live outside React. This repo uses `window`.
+
+## Styling isolation
+
+CSS is still one document. Catalog and cart inject styles into the same `<head>`, so a `.title` in one app can restyle the other unless the class names are unique.
+
+This repo uses CSS Modules for the remotes. Catalog imports `CatalogApp.module.css` as `styles` and writes `className={styles.title}`. Webpack turns that into a hash such as `_fdKFefnDSsT0GLYY408`. Cart's `.title` becomes a different hash. The source file still says `.title`. The DOM does not. That is scoped CSS. Catalog and cart configure it with `test: /\.module\.css$/` in their webpack rules. CSS-in-JS is the same idea: unique class names at runtime, local to the component that generated them.
+
+The shell is different. `shell.css` is a plain stylesheet. Classes such as `.shell-header` and `.remote-error` are global. The shell owns the page chrome, so those names are its convention. A remote that also used `.shell-header` would collide. Remotes stay out of that namespace.
+
+Shadow DOM is harder isolation. The remote's markup and styles live inside a shadow root. Outside CSS cannot reach in, and inside CSS cannot reach out. That is real encapsulation. It also means a shared design system cannot style the remote with a normal stylesheet, and some libraries fight the shadow boundary. This repo does not use it.
+
+A prefix is the same idea without a build step: `.catalog-title`, `.cart-title`. It works if every team keeps the convention. One forgotten unprefixed rule breaks the page. CSS Modules generate the uniqueness for you.
+
+A design system is the other half of the problem. Isolation stops collisions. Shared tokens and components stop the three apps from looking like three products. That can be a package such as `@mfe/ui`, or a federated remote that exposes buttons and tokens. This repo has neither. Catalog and cart only share the page background and typeface because the shell sets `body` styles before they mount.
+
+| Approach | What it does here |
+| --- | --- |
+| CSS Modules | Catalog and cart use `*.module.css`. Class names are hashed per file. |
+| Shell global CSS | `shell.css` styles chrome only. Remotes do not reuse those class names. |
+| Shadow DOM | Not used. Hard isolation, harder shared theming. |
+| Prefix convention | Not required when Modules own remote styles. |
+| Shared design system | Not in this repo yet. Would be a package or a federated UI remote. |
+
+The rule for this storefront: remotes use CSS Modules (or CSS-in-JS), the shell keeps a small global chrome stylesheet, and anything visual that both remotes need becomes a package or a federated UI remote rather than copied CSS.
