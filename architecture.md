@@ -25,6 +25,37 @@ flowchart LR
   shell -->|"useCartLines"| windowSlot
 ```
 
+## Contents
+
+- [Repo](#repo)
+- [Shared dependencies](#shared-dependencies)
+- [What loads when](#what-loads-when)
+- [Where `remoteEntry.js` is](#where-remoteentryjs-is)
+- [How the shell finds a chunk](#how-the-shell-finds-a-chunk)
+- [Production](#production)
+- [Routes](#routes)
+  - [`bootstrap.tsx`](#bootstraptsx)
+- [Run one app](#run-one-app)
+- [Data sharing](#data-sharing)
+- [Styling isolation](#styling-isolation)
+  - [CSS Modules / scoped CSS / CSS-in-JS](#css-modules--scoped-css--css-in-js)
+  - [Shadow DOM (Web Components)](#shadow-dom-web-components)
+  - [Namespacing / prefixing](#namespacing--prefixing)
+  - [Shared design system](#shared-design-system)
+- [Token-based styling](#token-based-styling)
+  - [Define tokens once](#define-tokens-once)
+  - [Shell publishes them on the page](#shell-publishes-them-on-the-page)
+  - [Remotes consume in CSS Modules](#remotes-consume-in-css-modules)
+  - [Wire the package](#wire-the-package)
+  - [Package vs federated design-system remote](#package-vs-federated-design-system-remote)
+  - [Themes and production](#themes-and-production)
+- [Cross-MFE communication](#cross-mfe-communication)
+  - [Custom events / event bus](#custom-events--event-bus)
+  - [Shared state via the shell](#shared-state-via-the-shell)
+  - [URL / query params](#url--query-params)
+  - [Props / callbacks](#props--callbacks)
+  - [What this storefront uses](#what-this-storefront-uses)
+
 ## Repo
 
 ```mermaid
@@ -284,24 +315,316 @@ A provider that lives only inside `CartApp` still fails. It is not mounted on `/
 
 ## Styling isolation
 
-CSS is still one document. Catalog and cart inject styles into the same `<head>`, so a `.title` in one app can restyle the other unless the class names are unique.
+CSS is one document. Catalog’s stylesheet and cart’s stylesheet both land in the shell’s `<head>`. Without isolation, both remotes’ `.title` rules fight.
 
-This repo uses CSS Modules for the remotes. Catalog imports `CatalogApp.module.css` as `styles` and writes `className={styles.title}`. Webpack turns that into a hash such as `_fdKFefnDSsT0GLYY408`. Cart's `.title` becomes a different hash. The source file still says `.title`. The DOM does not. That is scoped CSS. Catalog and cart configure it with `test: /\.module\.css$/` in their webpack rules. CSS-in-JS is the same idea: unique class names at runtime, local to the component that generated them.
+### CSS Modules / scoped CSS / CSS-in-JS
 
-The shell is different. `shell.css` is a plain stylesheet. Classes such as `.shell-header` and `.remote-error` are global. The shell owns the page chrome, so those names are its convention. A remote that also used `.shell-header` would collide. Remotes stay out of that namespace.
+Localize class names so “title” in source is not “title” in the DOM.
 
-Shadow DOM is harder isolation. The remote's markup and styles live inside a shadow root. Outside CSS cannot reach in, and inside CSS cannot reach out. That is real encapsulation. It also means a shared design system cannot style the remote with a normal stylesheet, and some libraries fight the shadow boundary. This repo does not use it.
+```css
+/* CatalogApp.module.css */
+.title {
+  font-size: 28px;
+}
+```
 
-A prefix is the same idea without a build step: `.catalog-title`, `.cart-title`. It works if every team keeps the convention. One forgotten unprefixed rule breaks the page. CSS Modules generate the uniqueness for you.
+```tsx
+import styles from "./CatalogApp.module.css";
 
-A design system is the other half of the problem. Isolation stops collisions. Shared tokens and components stop the three apps from looking like three products. That can be a package such as `@mfe/ui`, or a federated remote that exposes buttons and tokens. This repo has neither. Catalog and cart only share the page background and typeface because the shell sets `body` styles before they mount.
+<h1 className={styles.title}>Catalog</h1>
+/* DOM ≈ class="_title_fdKF_1" — cart's .title hashes differently */
+```
 
-| Approach | What it does here |
-| --- | --- |
-| CSS Modules | Catalog and cart use `*.module.css`. Class names are hashed per file. |
-| Shell global CSS | `shell.css` styles chrome only. Remotes do not reuse those class names. |
-| Shadow DOM | Not used. Hard isolation, harder shared theming. |
-| Prefix convention | Not required when Modules own remote styles. |
-| Shared design system | Not in this repo yet. Would be a package or a federated UI remote. |
+Catalog and cart configure this with `test: /\.module\.css$/` in their webpack rules. CSS-in-JS (styled-components, Emotion) does the same at runtime: generate a unique class per component. Same goal, different tooling.
+
+The shell is different. `shell.css` is a plain stylesheet. Classes such as `.shell-header` and `.remote-error` are global. The shell owns the page chrome. Remotes stay out of that namespace.
+
+### Shadow DOM (Web Components)
+
+Hard boundary: styles inside the shadow root cannot leak out, and page CSS cannot reach in.
+
+```ts
+class CatalogPanel extends HTMLElement {
+  connectedCallback() {
+    const root = this.attachShadow({ mode: "open" });
+    root.innerHTML = `
+      <style>.title { font-size: 28px; }</style>
+      <h1 class="title">Catalog</h1>
+    `;
+  }
+}
+customElements.define("mfe-catalog", CatalogPanel);
+```
+
+Outside `.title { color: red }` does not affect that `<h1>`. Shared design-system styles also cannot reach in unless you pierce the boundary (CSS variables on the host, or constructable stylesheets). Some libraries fight the shadow boundary. This repo does not use Shadow DOM.
+
+### Namespacing / prefixing
+
+Manual uniqueness, no Modules:
+
+```css
+/* catalog */
+.catalog-title { font-size: 28px; }
+
+/* cart */
+.cart-title { font-size: 22px; }
+```
+
+```tsx
+<h1 className="catalog-title">Catalog</h1>
+```
+
+Works if every team never drops the prefix. One bare `.button` and both remotes break. CSS Modules remove that discipline cost. The shell still uses global names (`.shell-header`) because it owns chrome and remotes agree not to reuse them.
+
+### Shared design system
+
+Isolation stops collisions. Consistency needs shared tokens and components.
+
+```ts
+// package @mfe/ui — or a federated remote exposing Button, tokens
+export const tokens = {
+  colorText: "#1c1917",
+  spaceMd: "16px",
+};
+
+export function Button(props: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button className={styles.btn} {...props} />;
+}
+```
+
+Catalog and cart import `@mfe/ui` (or `import("ui/Button")` if federated) instead of copying button CSS. This repo has neither. Remotes only inherit `body` background and font from `shell.css`.
+
+| Approach | Isolation strength | This repo |
+| --- | --- | --- |
+| CSS Modules / CSS-in-JS | Strong for class names | Catalog + cart `*.module.css` |
+| Shadow DOM | Strongest (full tree) | Not used |
+| Prefix convention | Weak (discipline) | Shell chrome only (`.shell-*`) |
+| Shared design system | Consistency, not isolation | Not yet |
 
 The rule for this storefront: remotes use CSS Modules (or CSS-in-JS), the shell keeps a small global chrome stylesheet, and anything visual that both remotes need becomes a package or a federated UI remote rather than copied CSS.
+
+## Token-based styling
+
+Token-based styling means named design values (color, space, type) instead of raw hex in every remote. Catalog and cart keep CSS Modules for isolation; they consume the same tokens, so the storefront looks like one product. This repo does not have a tokens package yet. Shell and remotes still hardcode values such as `#78716c` and `#1c1917`. The shape below is how to add it, same workspace pattern as `@mfe/cart-client`.
+
+### Define tokens once
+
+```css
+/* packages/ui-tokens/tokens.css — source of truth for the cascade */
+:root {
+  --color-bg: #f4f5f7;
+  --color-text: #1c1917;
+  --color-muted: #78716c;
+  --color-surface: #1c1917;
+  --color-on-surface: #fafaf9;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --font-sans: "Segoe UI", system-ui, sans-serif;
+  --text-title: 28px;
+  --radius-md: 8px;
+}
+```
+
+Optional JS/TS mirror for inline styles or charts:
+
+```ts
+// packages/ui-tokens/src/tokens.ts
+export const tokens = {
+  colorText: "var(--color-text)",
+  spaceMd: "var(--space-md)",
+} as const;
+```
+
+### Shell publishes them on the page
+
+Only the shell (or a shared CSS entry each remote imports) should set `:root`. Inside the federated page, one place wins:
+
+```ts
+// apps/shell/src/bootstrap.tsx
+import "@mfe/ui-tokens/tokens.css";
+import "./shell.css";
+```
+
+```css
+/* shell.css — use tokens, do not re-hardcode */
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+.shell-header {
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+  padding: 14px var(--space-lg);
+}
+```
+
+### Remotes consume in CSS Modules
+
+Modules still hash class names (isolation). Values come from CSS variables (consistency):
+
+```css
+/* CatalogApp.module.css */
+.title {
+  font-size: var(--text-title);
+  letter-spacing: -0.03em;
+}
+
+.origin {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.card {
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+}
+```
+
+Cart does the same. Change `--color-muted` once and both remotes pick it up after rebuild or reload. No shared `.title` class, so no clobbering.
+
+### Wire the package
+
+```json
+// packages/ui-tokens/package.json
+{ "name": "@mfe/ui-tokens", "version": "0.0.1" }
+```
+
+Add `"@mfe/ui-tokens": "0.0.1"` to shell, catalog, and cart dependencies, then `npm install` from the repo root.
+
+When a remote runs alone (http://localhost:3001), its `bootstrap.tsx` must also `import "@mfe/ui-tokens/tokens.css"`, or `:root` is empty and `var(--…)` falls back to nothing. Same idea as each app owning its own `BrowserRouter` when standalone.
+
+### Package vs federated design-system remote
+
+| Approach | When |
+| --- | --- |
+| `@mfe/ui-tokens` package | Tokens (and maybe Button) in the monorepo. Simple; every app rebuilds when tokens change. |
+| Federated `ui` remote | Independent deploy of components; shell loads `ui/Button`. Heavier; needs version and contract discipline. |
+
+For tokens only, a package plus CSS variables is the usual fit. Federate components later if teams ship UI on different cadences.
+
+### Themes and production
+
+- Theme switch: toggle a class or attribute on `<html>` (`[data-theme="dark"] { --color-bg: … }`). Remotes already use `var(--…)`, so they follow without knowing about dark mode.
+- Do not put tokens in Module Federation `shared` unless you also share the CSS injection story. CSS variables on `:root` are enough.
+- Pin one `@mfe/ui-tokens` version the way React is pinned. Two token packages means two design systems again.
+- Deploy: changing a token means rebuild apps that import that CSS, or bust CDN cache if the tokens stylesheet is hosted separately.
+
+Rule: Modules (or Shadow DOM) for which classes; tokens for what values.
+
+## Cross-MFE communication
+
+Catalog never imports cart, and cart never imports catalog. Remotes stay loosely coupled. They still need to cooperate. Four common options, plus what this repo actually uses.
+
+### Custom events / event bus
+
+One app fires; others listen. No shared store. Catalog does not know if the shell badge exists.
+
+```ts
+// catalog — after a successful add
+window.dispatchEvent(
+  new CustomEvent("mfe:cart-added", {
+    detail: { id: product.id, name: product.name },
+  }),
+);
+
+// shell — toast or analytics, not the cart lines themselves
+window.addEventListener("mfe:cart-added", (event) => {
+  const { id } = (event as CustomEvent<{ id: string }>).detail;
+  console.info("added", id);
+});
+```
+
+Use for one-shot signals: item added, user logged out, open a modal. Weak for “what is in the cart right now?” — that needs someone to hold state. A named bus (`bus.emit` / `bus.on`) is the same idea with less stringly typing. This repo does not use events for the cart.
+
+### Shared state via the shell
+
+The host owns a store or React context and passes it into remotes when it mounts them.
+
+```tsx
+// shell
+const [lines, setLines] = useState<LineItem[]>([]);
+
+<CatalogApp
+  lines={lines}
+  onAdd={(product) => setLines((prev) => upsert(prev, product))}
+/>
+<CartApp
+  lines={lines}
+  onRemove={(id) => setLines((prev) => prev.filter((l) => l.id !== id))}
+/>
+```
+
+Catalog and cart become presentational. Alone on http://localhost:3001 you must stub the same API. Overused, every remote waits on the host’s shape and deploy. This shell does not pass a store down. It mounts `<CatalogApp />` and `<CartApp />` with no props.
+
+Use sparingly for shell-owned chrome (theme, auth user). Avoid putting the whole domain model in the host.
+
+### URL / query params
+
+The route is the shared contract. No event, no store.
+
+```tsx
+// catalog — identity in the path (this repo)
+<Link to={product.id} />
+<Route path=":productId" element={<ProductDetail />} />
+
+// filters via search (same idea, not in this repo)
+<Link to="/catalog?tag=keyboard">Keyboards</Link>
+const tag = new URLSearchParams(location.search).get("tag");
+```
+
+Use for shareable, refresh-safe state: product id, page, sort, selected tab. Do not put the live cart array in the query string — ugly URLs, size limits, and every change becomes history noise.
+
+### Props / callbacks
+
+When the host mounts a remote it can pass data and handlers. The remote never reaches for `window` or another remote.
+
+```tsx
+// shell
+<CatalogApp
+  currency="USD"
+  onAddToCart={(product) => cartApi.add(product)}
+/>
+
+// catalog would accept props (current CatalogApp does not)
+export function CatalogApp({
+  onAddToCart,
+}: {
+  onAddToCart: (product: Product) => void;
+}) {
+  return (
+    <button type="button" onClick={() => onAddToCart(product)}>
+      Add to cart
+    </button>
+  );
+}
+```
+
+Use when the shell is the only place that should perform the side effect (auth-gated checkout, analytics wrapper). Catalog alone on http://localhost:3001 needs a no-op or local `onAddToCart` in its own `bootstrap.tsx`. This shell mounts remotes bare.
+
+### What this storefront uses
+
+Not events, not shell context, not props — a window-scoped store in `@mfe/cart-client`:
+
+```ts
+window.__MFE_CART__ ??= createStore();
+
+// catalog
+addToCart(product);
+
+// cart + shell header
+const lines = useCartLines();
+```
+
+Catalog writes; cart and the shell badge read. `CartApp` can be unmounted and the data still exists. That is shared global state by contract, not a direct catalog→cart call, and not Module Federation deduping the package. Prefer URL for identity, events for one-shot messages, and a narrow shared store only when several remotes must read and write the same live data while some are unmounted — the cart case here. Heavy shared state across remotes recreates a monolith with worse deploy boundaries.
+
+| Pattern | Good for | This repo |
+| --- | --- | --- |
+| Events / bus | Fire-and-forget signals | Not used |
+| Shell store / context | Host-owned chrome | Not used |
+| URL / query | Product id, filters | `/catalog/:productId` |
+| Props / callbacks | Host wires side effects | Not used (`<CatalogApp />` bare) |
+| Window / shared singleton store | Live cart across remotes | `window.__MFE_CART__` |
